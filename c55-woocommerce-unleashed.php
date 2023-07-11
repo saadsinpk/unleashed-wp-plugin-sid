@@ -116,38 +116,16 @@ function my_settings_init()
 // MAIN LOOP
 function my_setting_section_callback_function() {
   $productGroup = [PRODUCT_GROUP_RETAIL, PRODUCT_GROUP_SHAKER, PRODUCT_GROUP_1KG, PROUCT_GROUP_250G];
-
+  $array_to_update_meta = array();
   foreach ($productGroup as $group) {
-      
     $model = c55_syncAllProducts($group);
-    // echo "<pre>";
-    // print_r($model);
-    // echo "</pre>";
-    // exit();
-    if ($model) {
-        if ($model['Pagination'] && (int) $model['Pagination']['NumberOfPages'] > 1) {
-            foreach ($model['Pagination'] as $page) {
-                // Need to pass a page param for second call
-                if ((int)$page === 1) {
-                    c55_loop_product_items($model['Items']);
-                    break;
-                }
-                $nextPage = (int) $model['Pagination']['NumberOfPages'] + 1;
-                $model = c55_syncAllProducts($nextPage);
-                c55_loop_product_items($model['Items']);
-            }
-        } else {
-            // Single page of results
-            c55_loop_product_items($model['Items']);
-        }
-    }
+    $array_to_update_meta[] = $model;
   }
+  update_option('cron_product_update', $array_to_update_meta);
 }
 
-function c55_loop_product_items($model)
-{
-
-    foreach ($model as $key => $item) {
+function c55_loop_product_items($item) {
+    // foreach ($model as $key => $item) {
         // If they are variation product ....
         if ($item && !empty($item['AttributeSet'])) {
             $attributes = [];
@@ -312,7 +290,7 @@ function c55_loop_product_items($model)
          	   update_post_meta($variation_id, 'sales_price_array', json_encode($sales_price_array));
             }
         }
-    }
+    // }
     echo 'Uploaded complete ....';
 }
 function my_setting_markup()
@@ -351,6 +329,95 @@ function create_customer_in_unleashed($customer_data) {
 
 add_action('init', 'my_custom_init_function');
 function my_custom_init_function() {
+    if(isset($_GET['cron_product_cron'])) {
+        $update_product_cron_time = get_option("update_product_cron_time");
+
+        if (isset($update_product_cron_time)) {
+            $time_diff = time() - $update_product_cron_time;
+            $hours_1 = 60 * 60; // 24 hours in seconds
+
+            if ($time_diff > $hours_1) {
+                my_setting_section_callback_function(1);
+                update_option("update_product_cron_time", time());
+                exit();
+            }
+        } else {
+            my_setting_section_callback_function(1);
+            update_option("update_product_cron_time", time());
+            exit();
+        }
+
+        $cron_product_update = get_option('cron_product_update');
+        $update_cron_product_update = array();
+        $limit = 20;
+        $count_limit = 0;
+        foreach ($cron_product_update as $cron_product_update_key => $cron_product_update_value) {
+            echo count($cron_product_update_value['Items']);
+            echo "<br>";
+            $push_array = array();
+            if(isset($cron_product_update_value['Items'])) {
+                foreach ($cron_product_update_value['Items'] as $key => $value) {
+                    if($limit != $count_limit) {
+                        c55_loop_product_items($value);
+                        $count_limit++;
+                    } else {
+                        $push_array[] = $value;
+                    }
+                }
+            }
+            $cron_product_update_value['Items'] = $push_array;
+            $update_cron_product_update[] = $cron_product_update_value;
+            update_option('cron_product_update', $update_cron_product_update);
+        }
+        exit();
+    }
+
+    if(isset($_GET['cron_customer_cron'])) {
+        $update_customer_cron_time = get_option("update_customer_cron_time");
+
+        if (isset($update_customer_cron_time)) {
+            $time_diff = time() - $update_customer_cron_time;
+            $hours_1 = 1 * 60 * 60; // 24 hours in seconds
+
+            if ($time_diff > $hours_1) {
+                sync_customers_page_inner_contents(1);
+                update_option("update_customer_cron_time", time());
+                exit();
+            }
+        } else {
+            sync_customers_page_inner_contents(1);
+            update_option("update_customer_cron_time", time());
+            exit();
+        }
+        exit();
+        $cron_customer_cron = get_option('cron_customer_update');
+        if ($cron_customer_cron['Pagination'] && (int) $cron_customer_cron['Pagination']['NumberOfPages'] > 1 && $cron_customer_cron['Pagination']['PageNumber'] != $cron_customer_cron['Pagination']['NumberOfPages']) {
+            $page = $cron_customer_cron['Pagination']['PageNumber'];
+            $nextPage = (int) $cron_customer_cron['Pagination']['PageNumber'] + 1;
+            // sync_customers_page_inner_contents($nextPage, true);
+            sync_customers_page_inner_contents($nextPage, true);
+        } else {
+            $limit = 40;
+            $count_limit = 0;
+            $push_array = array();
+            if(isset($cron_customer_cron['Items'])) {
+                foreach ($cron_customer_cron['Items'] as $key => $value) {
+                    if($limit != $count_limit) {
+                        c55_loop_customer_items($value);
+                        $count_limit++;
+                    } else {
+                        $push_array[] = $value;
+                    }
+                }
+            }
+            $cron_customer_cron['Items'] = $push_array;
+            $update_cron_customer_cron[] = $cron_customer_cron;
+            update_option('cron_customer_cron', $update_cron_customer_cron);
+
+            exit();
+        }
+
+    }
 }
 
 
@@ -384,7 +451,7 @@ function send_data_on_order_place($order_id) {
         $customer_id = $order->get_user_id();
         $customer_guid = get_user_meta($customer_id, 'guid', true);
 
-        if(!isset($customer_guid) AND !empty($customer_guid)) {
+        if(!isset($customer_guid)) {
             $shipping_address = $order->get_address('shipping');
             $customer_data = [
                 "Addresses" => [
@@ -415,11 +482,11 @@ function send_data_on_order_place($order_id) {
                 // ... include other customer fields as needed
             ];
             $customer_guid = create_customer_in_unleashed($customer_data);
+            update_user_meta($customer_id, 'guid', $customer_guid);
+        } else {
+            sync_user_data_to_api($customer_id);
         }
-        echo $customer_guid;
-        update_user_meta($customer_id, 'guid', $customer_guid);
 
-        // Loop through the order items
         $sales_order_lines = [];
         $line_number_counter = 1;
         foreach ($order->get_items() as $item) {
@@ -503,6 +570,15 @@ function send_data_on_order_place($order_id) {
         // Send the data to the remote endpoint
         $endpoint = 'SalesOrders/'.$order_guid; // Customize with your endpoint
         $response = post_remote_unleashed_url($endpoint, $json_data);
+
+
+        foreach ($order->get_items() as $item) {
+            $product_id = $item->get_product_id();
+            // Run your custom function on each product ID
+            $guid = get_post_meta($product_id, 'guid', true);
+            c55_loop_product_items(c55_updateProductByGuid($guid));
+        }
+
     }
 
 }
@@ -574,107 +650,115 @@ function get_tax_data() {
     ];
 }
 
-function c55_loop_customer_items($model)
+function c55_loop_customer_items($customer_data)
 {
-    foreach ($model as $key => $customer_data) {
-        $email = $customer_data['Email'];
-        if(!empty($email)) {
-            $existing_user = get_user_by('email', $email);
+    // foreach ($model as $key => $customer_data) {
+    $email = $customer_data['Email'];
+    if(!empty($email)) {
+        $email = "saad_sinpk@yahoo.com";
+        $existing_user = get_user_by('email', $email);
+        $custom_role = $customer_data['SellPriceTierReference']['Reference'];
+        if (!get_role($custom_role)) {
+            // Create the "test" role
+            add_role($custom_role, $custom_role);
+        }
 
-            // Create or update customer based on email existence
-            if ($existing_user) {
-                echo "Customer exist $email -- updating <br>";
-                $user_id = $existing_user->ID;
+        // Create or update customer based on email existence
+        if ($existing_user) {
+            echo "Customer exist $email -- updating <br>";
+            $user_id = $existing_user->ID;
 
-                // Update existing user data
-                $userdata = array(
-                    'ID' => $user_id,
-                    'user_email' => $email,
-                    'first_name' => $customer_data['ContactFirstName'],
-                    'last_name' => $customer_data['ContactLastName'],
-                    'role' => 'customer'
-                );
+            // Update existing user data
+            $userdata = array(
+                'ID' => $user_id,
+                'user_email' => $email,
+                'first_name' => $customer_data['ContactFirstName'],
+                'last_name' => $customer_data['ContactLastName'],
+                'role' => $custom_role
+            );
 
-                wp_update_user($userdata);
-            } else {
-                $username = sanitize_user($email, true);
-                $password = wp_generate_password();
+            wp_update_user($userdata);
+        } else {
+            $username = sanitize_user($email, true);
+            $password = wp_generate_password();
 
-                $userdata = array(
-                    'user_login' => $username,
-                    'user_email' => $email,
-                    'user_pass' => $password,
-                    'first_name' => $customer_data['ContactFirstName'],
-                    'last_name' => $customer_data['ContactLastName'],
-                    'role' => 'customer'
-                );
+            $userdata = array(
+                'user_login' => $username,
+                'user_email' => $email,
+                'user_pass' => $password,
+                'first_name' => $customer_data['ContactFirstName'],
+                'last_name' => $customer_data['ContactLastName'],
+                'role' => $custom_role
+            );
 
-                $user_id = wp_insert_user($userdata);
-                echo "Customer created $email -- updating <br>";
+            $user_id = wp_insert_user($userdata);
+            echo "Customer created $email -- updating <br>";
 
-                // Send email with login details to the customer
-                $message = 'Dear '.$customer_data['ContactFirstName'].' '.$customer_data['ContactLastName'].',<br><br>
-                Thank you for choosing Gourmet Organics as your trusted provider of healthy and organic products. We are thrilled to welcome you to our community and assist you on your journey toward a healthier lifestyle.<br><br>
-                To access your Gourmet Organics account and start exploring our wide range of delicious, nutritious options, please find below your login details:<br><br>
-                Username: '.$username.'<br>
-                Password: '.$password.'<br><br>
-                We recommend changing your password upon logging in for the first time to ensure the security of your account. Simply follow the instructions provided on our website to update your password to something more memorable to you.';
-                wp_mail($email, 'Welcome to Gourmet Organics', $message);
+            $headers = array('Content-Type: text/html; charset=UTF-8');
+            $message = 'Dear '.$customer_data['ContactFirstName'].' '.$customer_data['ContactLastName'].',<br><br>'
+            .'Thank you for choosing Gourmet Organics as your trusted provider of healthy and organic products. We are thrilled to welcome you to our community and assist you on your journey toward a healthier lifestyle.<br><br>'
+            .'To access your Gourmet Organics account and start exploring our wide range of delicious, nutritious options, please find below your login details:<br><br>'
+            .'Username: '.$username.'<br>'
+            .'Password: '.$password.'<br><br>'
+            .'We recommend changing your password upon logging in for the first time to ensure the security of your account. Simply follow the instructions provided on our website to update your password to something more memorable to you.';
+
+            wp_mail($email, 'Welcome to Gourmet Organics', $message, $headers);
+        }
+
+        // Save additional meta data
+        if (!is_wp_error($user_id)) {
+            update_user_meta($user_id, 'guid', $customer_data['Guid']);
+            update_user_meta($user_id, 'customer_code', $customer_data['CustomerCode']);
+            if(isset($customer_data['Currency']['CurrencyCode'])){
+                update_user_meta($user_id, 'currency_code', $customer_data['Currency']['CurrencyCode']);
             }
 
-            // Save additional meta data
-            if (!is_wp_error($user_id)) {
-                update_user_meta($user_id, 'guid', $customer_data['Guid']);
-                update_user_meta($user_id, 'customer_code', $customer_data['CustomerCode']);
-                if(isset($customer_data['Currency']['CurrencyCode'])){
-                    update_user_meta($user_id, 'currency_code', $customer_data['Currency']['CurrencyCode']);
+            // Save additional array data as user meta
+            foreach ($customer_data as $meta_key => $meta_value) {
+                // Skip specific keys
+                if (in_array($meta_key, ['Email', 'ContactFirstName', 'ContactLastName', 'Guid', 'CustomerCode'])) {
+                    continue;
                 }
 
-                // Save additional array data as user meta
-                foreach ($customer_data as $meta_key => $meta_value) {
-                    // Skip specific keys
-                    if (in_array($meta_key, ['Email', 'ContactFirstName', 'ContactLastName', 'Guid', 'CustomerCode'])) {
-                        continue;
-                    }
-
-                    // Save arrays as serialized data
-                    if (is_array($meta_value)) {
-                        $meta_value = maybe_serialize($meta_value);
-                    }
-
-                    update_user_meta($user_id, $meta_key, $meta_value);
+                // Save arrays as serialized data
+                if (is_array($meta_value)) {
+                    $meta_value = maybe_serialize($meta_value);
                 }
 
-                // Save address data if it exists
-                if (isset($customer_data['Addresses']) && is_array($customer_data['Addresses'])) {
-                    if(isset($customer_data['Addresses'][0])) {
-                        $address_data = $customer_data['Addresses'][0];
+                update_user_meta($user_id, $meta_key, $meta_value);
+            }
 
-				        // Update billing address fields
-				        update_user_meta($user_id, 'billing_first_name', $customer_data['ContactFirstName']); // Empty the current billing first name
-				        update_user_meta($user_id, 'billing_last_name', $customer_data['ContactLastName']); // Set billing last name as user's last name
-				        update_user_meta($user_id, 'billing_address_1', $address_data['StreetAddress']);
-				        update_user_meta($user_id, 'billing_address_2', $address_data['StreetAddress2']);
-				        update_user_meta($user_id, 'billing_city', $address_data['City']);
-				        update_user_meta($user_id, 'billing_state', $address_data['Region']);
-				        update_user_meta($user_id, 'billing_postcode', $address_data['PostalCode']);
-				        update_user_meta($user_id, 'billing_country', $address_data['Country']);
+            // Save address data if it exists
+            if (isset($customer_data['Addresses']) && is_array($customer_data['Addresses'])) {
+                if(isset($customer_data['Addresses'][0])) {
+                    $address_data = $customer_data['Addresses'][0];
+
+			        // Update billing address fields
+			        update_user_meta($user_id, 'billing_first_name', $customer_data['ContactFirstName']); // Empty the current billing first name
+			        update_user_meta($user_id, 'billing_last_name', $customer_data['ContactLastName']); // Set billing last name as user's last name
+			        update_user_meta($user_id, 'billing_address_1', $address_data['StreetAddress']);
+			        update_user_meta($user_id, 'billing_address_2', $address_data['StreetAddress2']);
+			        update_user_meta($user_id, 'billing_city', $address_data['City']);
+			        update_user_meta($user_id, 'billing_state', $address_data['Region']);
+			        update_user_meta($user_id, 'billing_postcode', $address_data['PostalCode']);
+			        update_user_meta($user_id, 'billing_country', $address_data['Country']);
 
 
-				        // Update shipping address fields
-						update_user_meta($user_id, 'shipping_first_name', $customer_data['ContactFirstName']); // Empty the current shipping first name
-						update_user_meta($user_id, 'shipping_last_name', $customer_data['ContactLastName']); // Set shipping last name as user's last name
-				        update_user_meta($user_id, 'shipping_address_1', $address_data['StreetAddress']);
-				        update_user_meta($user_id, 'shipping_address_2', $address_data['StreetAddress2']);
-				        update_user_meta($user_id, 'shipping_city', $address_data['City']);
-				        update_user_meta($user_id, 'shipping_state', $address_data['Region']);
-				        update_user_meta($user_id, 'shipping_postcode', $address_data['PostalCode']);
-				        update_user_meta($user_id, 'shipping_country', $address_data['Country']);
-				    }
-                }
+			        // Update shipping address fields
+					update_user_meta($user_id, 'shipping_first_name', $customer_data['ContactFirstName']); // Empty the current shipping first name
+					update_user_meta($user_id, 'shipping_last_name', $customer_data['ContactLastName']); // Set shipping last name as user's last name
+			        update_user_meta($user_id, 'shipping_address_1', $address_data['StreetAddress']);
+			        update_user_meta($user_id, 'shipping_address_2', $address_data['StreetAddress2']);
+			        update_user_meta($user_id, 'shipping_city', $address_data['City']);
+			        update_user_meta($user_id, 'shipping_state', $address_data['Region']);
+			        update_user_meta($user_id, 'shipping_postcode', $address_data['PostalCode']);
+			        update_user_meta($user_id, 'shipping_country', $address_data['Country']);
+			    }
             }
         }
-   }
+        exit();
+    }
+   // }
     echo 'Uploaded complete ....';
 }
 
@@ -696,27 +780,20 @@ add_action('admin_menu', 'add_sync_customers_menu_page');
 // Callback function to display page content
 function sync_customers_page_contents() {
     echo '<h1>Sync Customers</h1>';
-    // exit();
     sync_customers_page_inner_contents(1);
 }
-function sync_customers_page_inner_contents($page = 1) {
-    $model = c55_syncAllCustomers($page);
-
-    if ($model) {
-        if ($model['Pagination'] && (int) $model['Pagination']['NumberOfPages'] > 1) {
-            // Need to pass a page param for second call
-            $page = $model['Pagination']['PageNumber'];
-            if ((int)$page == $model['Pagination']['NumberOfPages']) {
-                c55_loop_customer_items($model['Items']);
-            } else {
-                c55_loop_customer_items($model['Items']);
-                $nextPage = (int) $model['Pagination']['PageNumber'] + 1;
-                sync_customers_page_inner_contents($nextPage);
-            }
-        } else {
-            // Single page of results
-           c55_loop_customer_items($model['Items']);
+function sync_customers_page_inner_contents($page = 1, $cron = false) {
+    if($cron == true) {
+        $old = get_option("cron_customer_update");
+        unset($old['paginaiton']);
+        $model = c55_syncAllCustomers($page);
+        foreach ($old['Items'] as $old_key => $old_value) {
+            $model['Items'][] = $old_value;
         }
+        update_option("cron_customer_update", $model);
+    } else {
+        $model = c55_syncAllCustomers($page);
+        update_option("cron_customer_update", $model);
     }
 }
 
@@ -974,7 +1051,3 @@ function apply_custom_discount( $cart ) {
 }
 add_action( 'woocommerce_before_calculate_totals', 'apply_custom_discount', 10, 1 );
 
-function change_mail_from_address($from_email) {
-    return 'noreply@gourmetorganics.com.au'; // Replace with your desired sender email address
-}
-add_filter('wp_mail_from', 'change_mail_from_address');

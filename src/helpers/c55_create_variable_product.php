@@ -77,7 +77,15 @@ function create_product_variable($data)
 
     $postname = sanitize_title($data['title']);
     $author = empty($data['author']) ? '1' : $data['author'];
-
+    if(!isset($data['content'])) {
+        $data['content'] = '';
+    }
+    if(!isset($data['content'])) {
+        $data['content'] = '';
+    }
+    if(!isset($data['excerpt'])) {
+        $data['excerpt'] = '';
+    }
     $post_data = array(
         'post_author'   => $author,
         'post_name'     => $postname,
@@ -182,7 +190,7 @@ function create_product_variations($product_id, $variation_data)
     $product = wc_get_product($product_id);
 
     $variation_post = array(
-        'post_title'  => $product->get_name(),
+        'post_title'  => $product->get_title(),
         'post_name'   => 'product-' . $product_id . '-variation',
         'post_status' => 'publish',
         'post_parent' => $product_id,
@@ -264,6 +272,9 @@ function create_product_variations($product_id, $variation_data)
     if (!empty($variation_data['image'])) {
         $image_meta_url = '_knawatfibu_url';
         update_post_meta($variation_id, $image_meta_url, $variation_data['image']);
+    }
+    if(!isset($variation_data['content'])) {
+        $variation_data['content'] = '';
     }
     $variation->set_description($variation_data['content']);
     $variation->set_weight(''); // weight (reseting)

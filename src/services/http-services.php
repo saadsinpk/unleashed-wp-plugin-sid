@@ -9,7 +9,7 @@ defined('ABSPATH') || exit;
 
 
 
-function get_remote_unleashed_url($endpoint, $params = null)
+function get_remote_unleashed_url($endpoint, $params = null, $next_page = 1)
 {
 
     $baseUrl = 'https://api.unleashedsoftware.com/';
@@ -17,7 +17,11 @@ function get_remote_unleashed_url($endpoint, $params = null)
     $applicationKey = get_option('unleashed_api_key');
     $defaultTimeOutSecs = 30;
     $queryParams = $params ? http_build_query($params) : "";
-    $fullUrl = $baseUrl . $endpoint . '?' . $queryParams;
+    if($next_page > 1) {
+        $fullUrl = $baseUrl . $endpoint . '/'.$next_page.'?' . $queryParams;
+    } else {
+        $fullUrl = $baseUrl . $endpoint . '?' . $queryParams;
+    }
 
     $response = wp_remote_get(
         $fullUrl,
