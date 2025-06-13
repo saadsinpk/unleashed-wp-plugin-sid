@@ -8,8 +8,23 @@ Version: 1.0.0
 Author: Mark Dowton
 Author URI: https://www.linkedin.com/in/mark-dowton-03a85a41/
 Text Domain: Unleashed to woocommerce
-
 */
+
+register_shutdown_function(function(){
+    $err = error_get_last();
+    if ( $err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true) ) {
+        $log_dir = plugin_dir_path(__FILE__) . 'logs/';
+        wp_mkdir_p( $log_dir );
+        $msg = sprintf(
+            "[%s] %s in %s on line %d\n\n",
+            date('Y-m-d H:i:s'),
+            $err['message'],
+            $err['file'],
+            $err['line']
+        );
+        file_put_contents( $log_dir . 'php_shutdown.log', $msg, FILE_APPEND );
+    }
+});
 
 include_once('src/services/http-services.php');
 include_once('src/services/unleashed-services/unleashed-stock.php');
@@ -19,33 +34,18 @@ include_once('src/all-products/c55-all-products.php');
 include_once('src/all-customers/c55-all-customers.php');
 include_once('src/stock-adjustments/c55-stock-adjustments.php');
 include_once('src/woocommerce-products/c55-woocommerce-products.php');
-include_once('src/woocommerce-products/woocommerce_product_hooks.php');
 
 
 add_action('admin_menu', 'my_admin_menu');
 add_action('admin_enqueue_scripts', 'register_my_plugin_scripts');
 add_action('admin_enqueue_scripts', 'load_my_plugin_scripts');
 add_action('admin_init', 'my_settings_init');
-// Hook for CRON
-add_action( 'unleashed_cron_hook', 'unleashed_cron_exec' );
-if ( ! wp_next_scheduled( 'unleashed_cron_hook' ) ) {
-    wp_schedule_event( time(), 'hourly', 'unleashed_cron_hook' );
-}
+
 const PRODUCT_GROUP_RETAIL = 'retail';
 const PRODUCT_GROUP_SHAKER = 'shaker';
 const PRODUCT_GROUP_1KG = '1kg';
-const PROUCT_GROUP_250G = '25Og';
+const PROUCT_GROUP_250G = '250g';
 
-function unleashed_cron_exec() {
-    $to = 'markdowton007@gmail.com';
-    $subject = 'Cron launched';
-    $body = 'Cron called';
-    $headers = array('Content-Type: text/html; charset=UTF-8');
- 
-    wp_mail( $to, $subject, $body, $headers );
-    // Calls the main loop to execute
-    my_setting_section_callback_function();
-}
 
 function my_admin_menu()
 {
@@ -94,6 +94,11 @@ function load_my_plugin_scripts($hook)
 }
 function my_settings_init()
 {
+
+    //     echo "<pre>";
+    // print_r(get_post_meta( 835139, 'guid_order', true ));
+    //     echo "</pre>";
+    // exit();
 
     add_settings_section(
         'sample_page_setting_section',
@@ -153,8 +158,6 @@ function c55_loop_product_items($item) {
             $isFound = c55_get_product_by_sku($sku);
             // If not found create tthe variable product
             if ((int)$isFound === 0) {
-                    // 'content'       => $item['ProductDescription'],
-                    // 'excerpt'       => $item['ProductDescription'],
                 $productId = create_product_variable(array(
                     'author'        => '', // optional
                     'title'         => $parentVariation,
@@ -202,6 +205,8 @@ function c55_loop_product_items($item) {
                     'regular_price' => $item['SellPriceTier1']['Value'],
                     'sale_price'    => '',
                     'stock_qty'     => $stock_qty,
+                    'manage_stock'  => true,
+                    'stock_status'  => ( $stock_qty > 0 ? 'instock' : 'outofstock' ),
                     'image' => $attachId,
                     'weight' => $item['Weight'],
                     'length' => $item['Depth'],
@@ -237,6 +242,8 @@ function c55_loop_product_items($item) {
                     'regular_price' => $item['SellPriceTier1']['Value'],
                     'sale_price'    => '',
                     'stock_qty'     => $stock_qty,
+                    'manage_stock'  => true,
+                    'stock_status'  => ( $stock_qty > 0 ? 'instock' : 'outofstock' ),
                     'image' => $attachId,
                     'weight' => $item['Weight'],
                     'length' => $item['Depth'],
@@ -257,13 +264,19 @@ function c55_loop_product_items($item) {
                 $variation->set_regular_price($variation_data['regular_price']);
 
                 // Stock
-                if (!empty($variation_data['stock_qty'])) {
-                    $variation->set_stock_quantity($variation_data['stock_qty']);
-                    $variation->set_manage_stock(true);
-                    $variation->set_stock_status('');
+                // Force WooCommerce to manage stock on every variation
+                $variation->set_manage_stock( true );
+
+                // Always set the quantity (even if zero)
+                $variation->set_stock_quantity( (int) $variation_data['stock_qty'] );
+
+                // Explicitly mark status based on whether qty > 0
+                if ( $variation_data['stock_qty'] > 0 ) {
+                    $variation->set_stock_status( 'instock' );
                 } else {
-                    $variation->set_manage_stock(false);
+                    $variation->set_stock_status( 'outofstock' );
                 }
+
                 // if(isset($variation_data['content'])){
                 //     $variation->set_description($variation_data['content']);
                 // }
@@ -334,7 +347,7 @@ function my_custom_init_function() {
 
         if (isset($update_product_cron_time)) {
             $time_diff = time() - $update_product_cron_time;
-            $hours_1 = 60 * 60; // 24 hours in seconds
+            $hours_1 = 60 * 15; // 15 mins in seconds
 
             if ($time_diff > $hours_1) {
                 my_setting_section_callback_function(1);
@@ -349,11 +362,14 @@ function my_custom_init_function() {
 
         $cron_product_update = get_option('cron_product_update');
         $update_cron_product_update = array();
-        $limit = 20;
+        $limit = 40;
         $count_limit = 0;
         foreach ($cron_product_update as $cron_product_update_key => $cron_product_update_value) {
             echo count($cron_product_update_value['Items']);
-            echo "<br>";
+            // echo "<pre>";
+            // print_r($cron_product_update_value);
+            // echo "</pre>";
+            // exit();
             $push_array = array();
             if(isset($cron_product_update_value['Items'])) {
                 foreach ($cron_product_update_value['Items'] as $key => $value) {
@@ -424,163 +440,149 @@ function my_custom_init_function() {
 
 
    
-add_action('woocommerce_new_order', 'send_data_on_order_place', 10, 1);
-function send_data_on_order_place($order_id) {
-    // Get the order object
-    $order_id = wc_get_order($order_id);
-    $order_guid = get_post_meta($order_id, "guid_order");
-    if(isset($order_guid) AND !empty($order_guid)) {
-        $order = wc_get_order($order_id);
+add_action( 'woocommerce_checkout_order_processed', 'send_data_on_order_place', 10, 1 );
+function send_data_on_order_place( $order_id ) {
+    $log_dir  = plugin_dir_path( __FILE__ ) . 'logs/';
+    wp_mkdir_p( $log_dir );
+    $log_file = $log_dir . 'unleashed_errors.log';
 
-        // Generate GUID for the order
-        $order_guid = generate_guid();
+    try {
+        $order    = wc_get_order( $order_id );
+        $post_id  = $order->get_id();
 
-        // Retrieve dynamic data from the order and WordPress site
-        $order_number = $order->get_order_number();
-        $customer = $order->get_user();
-        $customer_code = $customer->get_id();
-        $customer_name = $customer->get_display_name();
-        $currency_id = get_option('woocommerce_currency');
-        $comments = get_order_comments($order);
-        $warehouse = get_warehouse_data();
-        $currency = get_currency_data();
-        $tax = get_tax_data();
-        $subtotal = $order->get_subtotal();
-        $tax_total = $order->get_total_tax();
-        $total = $order->get_total();
-        $customer_id = $order->get_user_id();
-        $customer_guid = get_user_meta($customer_id, 'guid', true);
-
-        if(!isset($customer_guid)) {
-            $shipping_address = $order->get_address('shipping');
-            $customer_data = [
-                "Addresses" => [
-                    [
-                        "AddressType" => "Shipping",
-                        "AddressName" => $shipping_address['address_1'],
-                        "StreetAddress" => $shipping_address['address_1'],
-                        "StreetAddress2" => $shipping_address['address_2'],
-                        "Suburb" => $shipping_address['city'],
-                        "City" => $shipping_address['city'],
-                        "Region" => $shipping_address['state'],
-                        "Country" => $shipping_address['country'],
-                        "PostalCode" => $shipping_address['postcode'],
-                        "IsDefault" => false
-                    ]
-                ],
-                "TaxCode" => "",
-                "TaxRate" => null,
-                "CustomerCode" => $customer_code,
-                "CustomerName" => $customer_name,
-                "Currency" => [
-                    "CurrencyCode" => $currency_id,
-                    "Description" => "Currency description", // Customize as needed
-                    "Guid"=>"f4765315-0d79-4484-986c-8f0ebf9fa2f2"
-                ],
-                "Notes" => null,
-                "Taxable" => true,
-                // ... include other customer fields as needed
-            ];
-            $customer_guid = create_customer_in_unleashed($customer_data);
-            update_user_meta($customer_id, 'guid', $customer_guid);
-        } else {
-            sync_user_data_to_api($customer_id);
+        // only once
+        if ( get_post_meta( $post_id, 'guid_order', true ) ) {
+            return;
         }
 
+        $order_guid       = generate_guid();
+        $customer_id      = $order->get_user_id();
+        $customer_guid    = get_user_meta( $customer_id, 'guid', true );
+        $comments         = get_order_comments( $order );
+        $warehouse        = get_warehouse_data();
+        $currency         = get_currency_data();
+        $tax              = get_tax_data();            // make sure this returns exactly the tax GUID
+        $subtotal         = (float) $order->get_subtotal();
+        $tax_total        = (float) $order->get_total_tax();
+
+        // build the lines (with your previous casts / logging)
         $sales_order_lines = [];
-        $line_number_counter = 1;
-        foreach ($order->get_items() as $item) {
-            $product = $item->get_product();
-            $product_id = $item->get_product_id();
-            $product_guid = get_post_meta($product_id, 'guid', true);
-            $product_code = $product->get_sku();
-            $product_description = $product->get_name();
-            $line_number = $item->get_id();
-            $order_quantity = $item->get_quantity();
-            $unit_price = $item->get_total() / $order_quantity;
-            $line_total = $item->get_total();
+        $line_counter     = 1;
+        foreach ( $order->get_items() as $item ) {
+            $qty        = (int)   $item->get_quantity();
+            $line_total = (float) $item->get_total();
+            $unit_price = $qty > 0 ? round( $line_total / $qty, 4 ) : 0;
 
-            // Generate GUID for the item
-            $item_guid = generate_guid();
-
-            // Prepare the sales order line data
             $sales_order_lines[] = [
-                "LineNumber" => $line_number_counter,
-                "Product" => [
-                    "Guid" => $product_guid,
-                    "ProductCode" => $product_code,
-                    "ProductDescription" => $product_description
+                'LineNumber'         => $line_counter++,
+                'Product'            => [
+                    'Guid'               => get_post_meta( $item->get_product_id(), 'guid', true ) ?: '',
+                    'ProductCode'        => $item->get_product()->get_sku(),
+                    'ProductDescription' => $item->get_product()->get_name(),
                 ],
-                "OrderQuantity" => $order_quantity,
-                "UnitPrice" => $unit_price,
-                "DiscountRate" => 0,
-                "LineTotal" => floatval($line_total),
-                "Comments" => "", // Customize as needed
-                "AverageLandedPriceAtTimeOfSale" => 10.913544444444, // Customize as needed
-                "TaxRate" => 0,
-                "LineTax" => 0,
-                "XeroTaxCode" => "EXEMPTOUTPUT", // Customize as needed
-                "BCUnitPrice" => $unit_price,
-                "BCLineTotal" => floatval($line_total),
-                "BCLineTax" => 0,
-                "XeroSalesAccount" => 41110, // Customize as needed
-                "SerialNumbers" => [],
-                "BatchNumbers" => [],
-                "Guid" => $item_guid
+                'OrderQuantity'      => $qty,
+                'UnitPrice'          => $unit_price,
+                'DiscountRate'       => 0,
+                'LineTotal'          => $line_total,
+                'Comments'           => '',
+                'AverageLandedPriceAtTimeOfSale' => 10.9135,
+                'TaxRate'            => 0,
+                'LineTax'            => 0,
+                'XeroTaxCode'        => 'EXEMPTOUTPUT',
+                'BCUnitPrice'        => $unit_price,
+                'BCLineTotal'        => $line_total,
+                'BCLineTax'          => 0,
+                'XeroSalesAccount'   => 41110,
+                'SerialNumbers'      => [],
+                'BatchNumbers'       => [],
+                'Guid'               => generate_guid(),
             ];
-            $line_number_counter++;
         }
 
-        $converted_order_id = str_pad($order_id, 8, '0', STR_PAD_LEFT);
-        // Prepare the payload
-        $data = [
-            "SalesOrderLines" => $sales_order_lines,
-            "OrderNumber" => "SO-"+$converted_order_id,
-            "OrderStatus" => "Parked", // Customize as needed
-            "Customer" => [
-                "CustomerCode"=>$customer_guid,
-                "CustomerName"=>$customer_name,
-                "CurrencyId"=>8,
-                "Guid"=>$customer_guid
+        $converted_order_id = str_pad( $order_id, 8, '0', STR_PAD_LEFT );
+
+        // PAYLOAD: only include the Tax GUID
+        $payload = [
+            'SalesOrderLines'   => $sales_order_lines,
+            'OrderNumber'       => 'SO-' . $converted_order_id,
+            'OrderStatus'       => 'Parked',
+            'Customer'          => [
+                'CustomerCode' => $customer_guid,
+                'CustomerName' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
+                'CurrencyId'   => 8,
+                'Guid'         => $customer_guid,
             ],
-            "Comments" => $comments,
-            "Warehouse" => $warehouse,
-            "Currency" => $currency,
-            "ExchangeRate" => 1,
-            "DiscountRate" => 0,
-            "Tax" => $tax,
-            "TaxRate" => $tax["TaxRate"],
-            "XeroTaxCode" => $tax["TaxCode"],
-            "SubTotal" => floatval($subtotal),
-            "TaxTotal" => floatval($tax_total),
-            "Total" => floatval($subtotal) + floatval($tax_total),
-            "TotalVolume" => 0,
-            "TotalWeight" => 0,
-            "BCSubTotal" => $subtotal,
-            "BCTaxTotal" => floatval($tax_total),
-            "BCTotal" => floatval($subtotal) + floatval($tax_total),
-            "AllocateProduct" => true,
-            "CreatedBy" => get_option('admin_email'), // Customize as needed
-            "LastModifiedBy" => get_option('admin_email'), // Customize as needed
-            "Guid" => $order_guid
+            'Comments'          => $comments,
+            'Warehouse'         => $warehouse,
+            'Currency'          => $currency,
+            'ExchangeRate'      => 1,
+            'DiscountRate'      => 0,
+            // instead of shoving the whole Tax struct through, just pass its GUID:
+            'Tax'               => [ 'Guid' => $tax['Guid'] ],
+            // levels above don’t need TaxRate/XeroTaxCode—Unleashed will fill those from the GUID
+            'SubTotal'          => $subtotal,
+            'TaxTotal'          => $tax_total,
+            'Total'             => $subtotal + $tax_total,
+            'TotalVolume'       => 0,
+            'TotalWeight'       => 0,
+            'BCSubTotal'        => $subtotal,
+            'BCTaxTotal'        => $tax_total,
+            'BCTotal'           => $subtotal + $tax_total,
+            'AllocateProduct'   => true,
+            'CreatedBy'         => get_option( 'admin_email' ),
+            'LastModifiedBy'    => get_option( 'admin_email' ),
+            'Guid'              => $order_guid,
         ];
-        $json_data = json_encode($data);
 
-        update_post_meta($order_id, "guid_order", $order_guid);
-        // Send the data to the remote endpoint
-        $endpoint = 'SalesOrders/'.$order_guid; // Customize with your endpoint
-        $response = post_remote_unleashed_url($endpoint, $json_data);
+        $json_data = wp_json_encode( $payload );
 
 
-        foreach ($order->get_items() as $item) {
-            $product_id = $item->get_product_id();
-            // Run your custom function on each product ID
-            $guid = get_post_meta($product_id, 'guid', true);
-            c55_loop_product_items(c55_updateProductByGuid($guid));
+        // store the GUID so we never re‐send
+        update_post_meta( $post_id, 'guid_order', $order_guid );
+
+        file_put_contents( $log_file,
+            "[".date('Y-m-d H:i:s')."] REQUEST:\n".$json_data."\n\n",
+            FILE_APPEND
+        );
+
+
+        $response = post_remote_unleashed_url( 'SalesOrders/' . $order_guid, $json_data );
+
+        if ( is_wp_error( $response ) ) {
+            file_put_contents( $log_file,
+                "[".date('Y-m-d H:i:s')."] WP_ERROR: ".$response->get_error_message()."\n\n",
+                FILE_APPEND
+            );
+            return; // stop
         }
 
+        // stringify & log the response
+        $repr = is_array($response) ? var_export($response, true) : $response;
+        file_put_contents( $log_file,
+            "[".date('Y-m-d H:i:s')."] RESPONSE:\n".$repr."\n\n",
+            FILE_APPEND
+        );
+
+        // if the API returned its own errors array
+        if ( is_array($response) && ! empty( $response['Items'] ) ) {
+            file_put_contents( $log_file,
+                "[".date('Y-m-d H:i:s')."] API_ERRORS:\n".var_export($response['Items'], true)."\n\n",
+                FILE_APPEND
+            );
+        }
+
+    } catch ( Exception $e ) {
+        // catch any uncaught exception
+        file_put_contents( $log_file,
+            "[".date('Y-m-d H:i:s')."] EXCEPTION: ".$e->getMessage()."\n\n",
+            FILE_APPEND
+        );
     }
 
+    // finally, re-sync your products
+    // foreach ( $order->get_items() as $item ) {
+        // c55_loop_product_items( c55_updateProductByGuid( get_post_meta($item->get_product_id(),'guid',true) ) );
+    // }
 }
 
 

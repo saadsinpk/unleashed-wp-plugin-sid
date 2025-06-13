@@ -24,7 +24,7 @@ if (!function_exists('c55_plugin_log')) {
 
 function dd($var)
 {
-    echo '<pre>' . var_export($var, true) . '</pre>';
-    die();
+    // echo '<pre>' . var_export($var, true) . '</pre>';
+    // die();
 }
 

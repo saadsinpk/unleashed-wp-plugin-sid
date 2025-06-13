@@ -19,6 +19,7 @@ if (!function_exists('c55_getAllProducts')) {
 
 function c55_updateProductVariable($productId, $model)
 {
+
     if (!isset($productId)) {
         throw new Exception('Missing product ID..');
     }
@@ -27,6 +28,10 @@ function c55_updateProductVariable($productId, $model)
     $parentVariation = '';
     if ($model) {
         foreach ($model['AttributeSet']['Attributes'] as $key => $attr) {
+            if($attr['Value'] == '25g') {
+                $attr['Value'] = '25g - Sachet';
+            }
+
             if ($attr['Name'] === 'Name') {
                 $parentVariation = strtolower($attr['Value']);
             } else {
@@ -34,13 +39,13 @@ function c55_updateProductVariable($productId, $model)
             }
         }
     }
+    unset($attributes['type']);
+
     $product = wc_get_product($productId);
 
     $post_data = array(
         'ID'         => $productId,
         'post_title'    => $parentVariation
-        // 'post_content'  => $model['ProductDescription'],
-        // 'post_excerpt'  => $model['ProductDescription']
     );
 
     wp_update_post($post_data);
@@ -79,43 +84,25 @@ function c55_updateProductVariable($productId, $model)
         }
     }
     update_post_meta($productId, '_product_attributes', $product_attributes);
-    if (!empty($model['ImageUrl'])) {
-        $image_meta_url = '_knawatfibu_url';
-        update_post_meta($productId, $image_meta_url, $model['ImageUrl']);
-    } else {
-        $attachId = 'http://go.dev55.com.au/wp-content/uploads/2022/08/placeholder-gourmet-organics-herbs-spices-foods.jpg';
-        $image_meta_url = '_knawatfibu_url';
-        update_post_meta($productId, $image_meta_url, $attachId);
+    $pro_img_time = get_post_meta($productId, "img_upload", true);
+    $pro_cron_time = get_option("update_product_cron_time");
+
+    if($pro_img_time != $pro_cron_time) {
+        if (!empty($model['ImageUrl'])) {
+            $image_meta_url = '_knawatfibu_url';
+            update_post_meta($productId, $image_meta_url, $model['ImageUrl']);
+        } else {
+            $attachId = 'http://go.dev55.com.au/wp-content/uploads/2022/08/placeholder-gourmet-organics-herbs-spices-foods.jpg';
+            $image_meta_url = '_knawatfibu_url';
+            update_post_meta($productId, $image_meta_url, $attachId);
+        }
     }
+    $product->set_default_attributes(array());
     $product->save();
     if (isset($model['Weight'])) {
         if (isset($model['Weight'])) {
             $product->set_weight($model['Weight']); // weight (reseting)
-            // echo "<br>";
-            // echo $model['Weight'];
-            // echo "<br>";
         }
     }
 
-
-    // SET update data
-    // $mappedUpdateModel = [
-    //     'author'        => '', // optional
-    //     'title'         => $parentVariation,
-    //     'content'       => $item['ProductDescription'],
-    //     'excerpt'       => $item['ProductDescription'],
-    //     'regular_price' => '', // product regular price
-    //     'sale_price'    => '', // product sale price (optional)
-    //     'stock'         => '', // Set a minimal stock quantity
-    //     'set_manage_stock' => false,
-    //     'image_id'      => '', // optional
-    //     'gallery_ids'   => array(), // optional
-    //     'sku'           => $sku, // optional
-    //     'tax_class'     => '', // optional
-    //     'weight'        => '', // optional
-    //     // For NEW attributes/values use NAMES (not slugs)
-    //     'attributes'    => $attributes
-    // ];
-
-    // dd($product);
 }

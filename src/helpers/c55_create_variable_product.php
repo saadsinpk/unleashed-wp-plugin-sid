@@ -278,6 +278,7 @@ function create_product_variations($product_id, $variation_data)
     }
     $variation->set_description($variation_data['content']);
     $variation->set_weight(''); // weight (reseting)
+    update_post_meta($variation_id, 'guid', $variation_id['Guid']);
 
     $variation->save(); // Save the data
 
